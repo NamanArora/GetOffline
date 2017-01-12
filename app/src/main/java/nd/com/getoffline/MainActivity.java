@@ -1,13 +1,13 @@
 
 package nd.com.getoffline;
 
+import android.os.Environment;
 import android.os.StrictMode.ThreadPolicy;
 import android.os.StrictMode;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.support.design.widget.FloatingActionButton;
@@ -25,30 +25,45 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.util.Log;
+import java.io.FileNotFoundException;
 import java.net.HttpURLConnection;
-
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import android.speech.tts.TextToSpeech;
-
+import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.Locale;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.BufferedReader;
+import java.io.FileOutputStream;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import android.speech.tts.TextToSpeech;
+import android.content.Context;
+import android.os.Bundle;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.DefaultItemAnimator;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.support.v7.widget.Toolbar;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.Toast;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
-
-    //private EditText ed_url;
-    //if it NEEDS to be final, make the change
     Context context;
-    //private EditText result;
     String url,name;
-    SharedPreferences pref;
+    //SharedPreferences pref;
     public static int SDK_INT = android.os.Build.VERSION.SDK_INT;
     URL urlget;
-
+    DbHandler dbase= new DbHandler(this);
+    private List<PageInfo>pageList =new ArrayList<>();
+    private RecyclerView recyclerview;
+    private MyAdap adap;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -60,13 +75,19 @@ public class MainActivity extends AppCompatActivity {
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         context = this;
-        pref =getSharedPreferences("GetOfflinePref",Context.MODE_PRIVATE);
-
-
+        //pref =getSharedPreferences("GOPref",Context.MODE_PRIVATE);
+        recyclerview=(RecyclerView)findViewById(R.id.recview);
+        adap=new MyAdap(pageList);
+        RecyclerView.LayoutManager pLayoutManager = new LinearLayoutManager(getApplicationContext());
+        recyclerview.setLayoutManager(pLayoutManager);
+        recyclerview.setItemAnimator(new DefaultItemAnimator());
+        recyclerview.setAdapter(adap);
+        setPageList();
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+
                 Snackbar.make(view, "add the link to the webpage in the following prompt!", Snackbar.LENGTH_LONG)
                         .setAction("Action", null).show();
                    if(checkInternet())
@@ -77,12 +98,16 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
-
-    private boolean checkInternet() {
-
+    private void setPageList()
+    {
+        pageList=dbase.getAllPages(pageList);
+        
+        adap.notifyDataSetChanged();
+    }
+    private boolean checkInternet()
+    {
         boolean haveConnectedWifi = false;
         boolean haveConnectedMobile = false;
-
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkInfo[] netInfo = cm.getAllNetworkInfo();
         for (NetworkInfo ni : netInfo) {
@@ -94,17 +119,13 @@ public class MainActivity extends AppCompatActivity {
                     haveConnectedMobile = true;
         }
         return haveConnectedWifi || haveConnectedMobile;
-
-
     }
-
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
         getMenuInflater().inflate(R.menu.menu_main, menu);
         return true;
     }
-
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         // Handle action bar item clicks here. The action bar will
@@ -116,70 +137,65 @@ public class MainActivity extends AppCompatActivity {
         if (id == R.id.action_settings) {
             return true;
         }
-
         return super.onOptionsItemSelected(item);
     }
-
     boolean checkURL(String u)
     {
         try {
-            HttpURLConnection.setFollowRedirects(false);        //
-            HttpURLConnection con = (HttpURLConnection) new URL(u).openConnection();
-            con.setConnectTimeout(1000);
-            con.setReadTimeout(1000);
-            con.setRequestMethod("HEAD");
-            return (con.getResponseCode() == HttpURLConnection.HTTP_OK);
-        } catch (Exception e) {
-            e.printStackTrace();
+            URL url = new URL(u);
+            URLConnection conn = url.openConnection();
+            conn.connect();
+            return true;
+        } catch (MalformedURLException e) {
+            Toast.makeText(context, "the URL is not in a valid form!!!", Toast.LENGTH_LONG).show();// the URL is not in a valid form
+            return false;
+        } catch (IOException e) {
+            Toast.makeText(context, " the connection couldn't be established!!!", Toast.LENGTH_LONG).show();// the connection couldn't be established
             return false;
         }
+    }
+
+    public void makeEntry(int id, String name, String code)
+    {
+        PageInfo p = new PageInfo(id,name,code);
+        pageList.add(p);
+        adap.notifyDataSetChanged();
     }
 
     public void givePrompt()
     {
         LayoutInflater li = LayoutInflater.from(context);
         View promptsView = li.inflate(R.layout.prompts, null);
-
         AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(
                 context);
-
         // set prompts.xml to alertdialog builder
         alertDialogBuilder.setView(promptsView);
-
         final EditText userInputU = (EditText) promptsView
                 .findViewById(R.id.UserInputURL);
-
+        userInputU.setText("");                     //to make sure that the previous url is not selected.
+                                                    // that is, if the user is trying to scrape a page (which may be diffrent),
+                                                    //  2nd time in succession, the vslue of previous page is not selected
         final EditText userInputN=(EditText) promptsView
                 .findViewById(R.id.UserInputName);
-
+        userInputN.setText("");                     //to make sure that the previous url is not selected.
+                                                    // that is, if the user is trying to scrape a page (which may be diffrent),
+                                                    //  2nd time in succession, the vslue of previous page is not selected
         // set dialog message
         alertDialogBuilder
                 .setCancelable(false)
                 .setPositiveButton("ADD",
                         new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface dialog,int id) {
-                                // get user input and set it to result
-                                // edit text
                                 url=userInputU.getText().toString();
-                                String title="";
+                                String code="";
                                 try {
                                     urlget = new URL(url);
                                 } catch (MalformedURLException e) {
                                     e.printStackTrace();
                                 }
                                 name=userInputN.getText().toString();
-                                SharedPreferences.Editor editor =pref.edit();
-                                editor.putString(name,url.toString());
-                                editor.commit();
-
-                                /*
-                                * code for checking the existancec of url goes here
-                                 */
-
                                 if(checkURL(url))
                                 {
-                                   //scrapePage(urlget);
-
                                     BufferedReader reader = null;
                                     try {
                                         reader = new BufferedReader(new InputStreamReader(urlget.openStream(), "UTF-8"));
@@ -190,7 +206,7 @@ public class MainActivity extends AppCompatActivity {
                                     try {
                                         StringBuilder builder=new StringBuilder();
                                         for (String line; (line = reader.readLine()) != null;) {
-                                            title=title+line;
+                                            code=code+line;
                                             builder.append(line.trim());
                                         }
                                     } catch (IOException e) {
@@ -198,18 +214,11 @@ public class MainActivity extends AppCompatActivity {
                                     } finally {
                                         if (reader != null) try { reader.close(); } catch (IOException logOrIgnore) {}
                                     }
-
-                                    EditText t = (EditText) findViewById(R.id.title);
-                                    t.setText(title);
-
+                                    int count = dbase.countPages()+1;
+                                    dbase.addPage(new PageInfo(count,name,code));
+                                    makeEntry(count, name, code);
+                                    Log.d("added to the db",code);
                                 }
-                                else
-                                {
-                                    Toast.makeText(context, "Invalid URL!!!", Toast.LENGTH_LONG).show();
-                                }
-                                //below onwards, for cleaning purpose, add the code to scrapePage() method.
-                                //maybe you need to put it in the async's doInBackGround().
-
                             }
                         })
                 .setNegativeButton("Cancel",
@@ -218,31 +227,8 @@ public class MainActivity extends AppCompatActivity {
                                 dialog.cancel();
                             }
                         });
-
-        // create alert dialog
         AlertDialog alertDialog = alertDialogBuilder.create();
-
-        // show it
         alertDialog.show();
-
     }
-
-
-    public void scrapePage(URL url)
-    {
-        /*
-         * after confirmation of url being correct, scrape the page.
-         *  after that make a .html file with the name given by the user and save in the default directory.
-         *  on click of the recycler view's entity, open the file in default browser.
-         *  also store the path of the .html file in shared preferences.
-         */
-
-        EditText title ;
-        title= (EditText) findViewById(R.id.title);
-
-    }
-
-
-
+    //add a function to report a page
 }
-
